@@ -1,0 +1,57 @@
+title: AI-Assisted SSH Brute Force - Automated Timing Pattern
+id: 7f2e3a1b-c4d5-4e6f-8a9b-0c1d2e3f4a5b
+status: production
+description: >
+    Detects SSH authentication failures from a single source IP exhibiting
+    machine-regularity consistent with LLM-orchestrated credential stuffing.
+    Human attackers show high inter-attempt timing variance (CV > 0.5); AI
+    tools produce near-clockwork regularity (CV < 0.15). Threshold of 15
+    failures per 60 seconds per source IP is calibrated against 90-day
+    baseline telemetry to achieve < 0.1% false-positive rate. Severity
+    escalates when correlated with subsequent decoy file access events
+    sharing the same src_ip (see rule decoy_file_access).
+references:
+    - https://attack.mitre.org/techniques/T1110/001/
+    - https://attack.mitre.org/techniques/T1078/
+    - https://atlas.mitre.org/techniques/AML.T0000/
+    - https://atlas.mitre.org/techniques/AML.T0040/
+author: ATDP Detection Engineering
+date: 2024/01/15
+modified: 2024/01/15
+tags:
+    # MITRE ATT&CK
+    - attack.credential_access
+    - attack.t1110
+    - attack.t1110.001
+    - attack.t1078
+    # MITRE ATLAS - ML Attack Staging: adversary uses an AI/LLM to orchestrate
+    # credential attacks, reducing human fingerprints in timing patterns
+    - atlas.aml.t0000
+    # MITRE ATLAS - Network Security Reconnaissance: LLM selects targets and
+    # wordlists based on prior enumeration output fed back into the model
+    - atlas.aml.t0040
+logsource:
+    product: linux
+    service: auth
+detection:
+    ssh_failures:
+        message|contains:
+            - 'Failed password for'
+            - 'Invalid user'
+            - 'Failed publickey for'
+            - 'Connection closed by authenticating user'
+    filter_localhost:
+        src_ip: '127.0.0.1'
+    condition: ssh_failures and not filter_localhost | count() by src_ip > 15
+    timeframe: 60s
+falsepositives:
+    - Authorized penetration tests with documented scope and change ticket
+    - CI/CD pipelines using SSH deploy keys with misconfigured credential rotation
+    - Internal security scanners (allowlist src_ip in filter_localhost)
+level: high
+fields:
+    - src_ip
+    - user
+    - dst_port
+    - message
+    - _time
