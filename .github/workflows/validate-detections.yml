@@ -1,0 +1,205 @@
+name: Detection-as-Code Validation Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  validate-and-convert:
+    name: Validate Sigma Rules & Convert to SPL
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install sigma-cli and backends
+        run: |
+          pip install sigma-cli pySigma-backend-splunk pySigma-pipeline-sysmon \
+                      pySigma-pipeline-windows pySigma-collection pytest pyyaml
+
+      - name: Validate Sigma rule syntax
+        id: validate
+        run: |
+          echo "## Sigma Rule Validation" >> $GITHUB_STEP_SUMMARY
+          FAILED=0
+          for rule in sigma/*.yml; do
+            echo "Validating: $rule"
+            sigma check "$rule" && echo "  PASS: $rule" || { echo "  FAIL: $rule"; FAILED=1; }
+          done
+          if [ $FAILED -eq 1 ]; then
+            echo "### FAILED: One or more rules have syntax errors" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          echo "### All rules passed syntax validation" >> $GITHUB_STEP_SUMMARY
+
+      - name: Convert Sigma rules to Splunk SPL
+        id: convert
+        run: |
+          mkdir -p output/spl
+          for rule in sigma/*.yml; do
+            base=$(basename "$rule" .yml)
+            sigma convert \
+              --target splunk \
+              --pipeline splunk_windows \
+              --output "output/spl/${base}.spl" \
+              "$rule" || sigma convert --target splunk --output "output/spl/${base}.spl" "$rule"
+            echo "Converted: $base"
+          done
+
+      - name: Display generated SPL
+        run: |
+          echo "## Generated Splunk SPL Queries" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          for spl in output/spl/*.spl; do
+            rulename=$(basename "$spl" .spl)
+            echo "### $rulename" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat "$spl" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          done
+
+      - name: Run fixture-based detection tests
+        id: test
+        run: |
+          pytest tests/test_detections.py -v --tb=short 2>&1 | tee test_output.txt
+          echo "## Test Results" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat test_output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Generate MITRE ATT&CK + ATLAS coverage report
+        id: coverage
+        run: |
+          python - << 'PYEOF'
+          import yaml
+          import os
+          import json
+          from pathlib import Path
+
+          rules = []
+          for f in Path("sigma").glob("*.yml"):
+              with open(f) as fh:
+                  rule = yaml.safe_load(fh)
+                  rules.append(rule)
+
+          attack_coverage = {}
+          atlas_coverage = {}
+
+          for rule in rules:
+              tags = rule.get("tags", [])
+              title = rule.get("title", "Unknown")
+              level = rule.get("level", "unknown")
+              for tag in tags:
+                  if tag.startswith("attack.t"):
+                      tid = tag.replace("attack.", "").upper()
+                      if tid not in attack_coverage:
+                          attack_coverage[tid] = []
+                      attack_coverage[tid].append({"rule": title, "level": level})
+                  elif tag.startswith("atlas.aml"):
+                      tid = tag.replace("atlas.", "").upper()
+                      if tid not in atlas_coverage:
+                          atlas_coverage[tid] = []
+                      atlas_coverage[tid].append({"rule": title, "level": level})
+
+          # ATT&CK technique names (subset relevant to ATDP)
+          attack_names = {
+              "T1110": "Brute Force",
+              "T1110.001": "Brute Force: Password Guessing",
+              "T1078": "Valid Accounts",
+              "T1083": "File and Directory Discovery",
+              "T1005": "Data from Local System",
+              "T1552.001": "Credentials in Files",
+              "T1595": "Active Scanning",
+              "T1595.001": "Scanning IP Blocks",
+              "T1046": "Network Service Discovery",
+              "T1590": "Gather Victim Network Information",
+              "T1190": "Exploit Public-Facing Application",
+              "T1021.004": "Remote Services: SSH",
+          }
+
+          atlas_names = {
+              "AML.T0000": "ML Attack Staging",
+              "AML.T0035": "ML Artifact Collection",
+              "AML.T0040": "Network Security Reconnaissance",
+              "AML.T0047": "ML-Enabled Product or Service",
+              "AML.T0048": "Victim Monitoring",
+          }
+
+          report_lines = []
+          report_lines.append("## MITRE ATT&CK Coverage")
+          report_lines.append("")
+          report_lines.append("| Technique ID | Technique Name | Severity | Detecting Rule |")
+          report_lines.append("|---|---|---|---|")
+          for tid, rules_list in sorted(attack_coverage.items()):
+              for r in rules_list:
+                  name = attack_names.get(tid, "See ATT&CK navigator")
+                  report_lines.append(f"| [{tid}](https://attack.mitre.org/techniques/{tid.replace('.','/')}) | {name} | {r['level']} | {r['rule']} |")
+
+          report_lines.append("")
+          report_lines.append("## MITRE ATLAS Coverage")
+          report_lines.append("")
+          report_lines.append("| Technique ID | Technique Name | Severity | Detecting Rule |")
+          report_lines.append("|---|---|---|---|")
+          for tid, rules_list in sorted(atlas_coverage.items()):
+              for r in rules_list:
+                  name = atlas_names.get(tid, "See ATLAS navigator")
+                  report_lines.append(f"| [{tid}](https://atlas.mitre.org/techniques/{tid}) | {name} | {r['level']} | {r['rule']} |")
+
+          report_lines.append("")
+          report_lines.append(f"**Total ATT&CK techniques covered: {len(attack_coverage)}**")
+          report_lines.append(f"**Total ATLAS techniques covered: {len(atlas_coverage)}**")
+          report_lines.append(f"**Total detection rules: {len(list(Path('sigma').glob('*.yml')))}**")
+
+          report = "\n".join(report_lines)
+          print(report)
+
+          with open("coverage_report.md", "w") as f:
+              f.write(report)
+
+          with open(os.environ.get("GITHUB_STEP_SUMMARY", "/dev/null"), "a") as f:
+              f.write(report)
+          PYEOF
+
+      - name: Post coverage report as PR comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('coverage_report.md', 'utf8');
+            const header = `## ATDP Detection-as-Code Coverage Report\n\n` +
+                           `Commit: \`${{ github.sha }}\`\n\n`;
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: header + report
+            });
+
+      - name: Upload SPL artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: splunk-spl-queries
+          path: output/spl/
+          retention-days: 30
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: mitre-coverage-report
+          path: coverage_report.md
+          retention-days: 30
