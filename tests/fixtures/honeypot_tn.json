@@ -1,0 +1,2 @@
+{"_time": "2024-01-15T09:00:00.000Z", "host": "prod-web-01", "sourcetype": "linux_secure", "src_ip": "10.0.1.50", "dst_port": 22, "user": "deploy", "message": "Jan 15 09:00:00 prod-web-01 sshd[5001]: Accepted publickey for deploy from 10.0.1.50 port 45000 ssh2"}
+{"_time": "2024-01-15T12:00:00.000Z", "host": "prod-web-01", "sourcetype": "linux_secure", "src_ip": "10.0.1.51", "dst_port": 22, "user": "alice", "message": "Jan 15 12:00:00 prod-web-01 sshd[5002]: Accepted publickey for alice from 10.0.1.51 port 45001 ssh2"}
