@@ -1,0 +1,321 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ATDP - Autonomous Threat Defense Platform
+  Splunk Simple XML Dashboard v1.1
+
+  Deploy: Settings > User Interface > Views > Import Dashboard XML
+  Index assumptions: main (or change index= in each search)
+  Sourcetypes used: linux_secure, linux:audit, cowrie, linux:iptables
+-->
+<dashboard version="1.1" theme="dark">
+  <label>ATDP - Autonomous Threat Defense Platform</label>
+  <description>AI vs AI live threat intelligence — real-time detection across recon, deception, and credential attack surfaces</description>
+
+  <!-- ==================== ROW 1: STATUS BAR ==================== -->
+  <row>
+    <panel>
+      <title>Active Attacker IPs (Last 15 min)</title>
+      <single>
+        <search>
+          <query>
+            (sourcetype=linux_secure ("Failed password" OR "Invalid user"))
+            OR (sourcetype=cowrie)
+            OR (sourcetype="linux:iptables" action=deny)
+            | stats dc(src_ip) as attacker_count
+          </query>
+          <earliest>-15m</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="colorBy">value</option>
+        <option name="colorMode">block</option>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xdc4e41"]</option>
+        <option name="rangeValues">[0,1]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+
+    <panel>
+      <title>Honeypot Hits (Last 1 hour)</title>
+      <single>
+        <search>
+          <query>
+            sourcetype=cowrie eventid="cowrie.session.connect"
+            | stats count as hits
+          </query>
+          <earliest>-1h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="colorBy">value</option>
+        <option name="colorMode">block</option>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xdc4e41"]</option>
+        <option name="rangeValues">[0,1]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+
+    <panel>
+      <title>Decoy Files Accessed (Last 1 hour)</title>
+      <single>
+        <search>
+          <query>
+            sourcetype="linux:audit" key=decoy_access type=SYSCALL
+            | stats count as decoy_hits
+          </query>
+          <earliest>-1h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="colorBy">value</option>
+        <option name="colorMode">block</option>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xdc4e41"]</option>
+        <option name="rangeValues">[0,1]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+
+    <panel>
+      <title>SSH Brute Force Campaigns (Last 1 hour)</title>
+      <single>
+        <search>
+          <query>
+            sourcetype=linux_secure ("Failed password" OR "Invalid user")
+            | rex field=message "from (?P&lt;src_ip&gt;\d+\.\d+\.\d+\.\d+)"
+            | bucket _time span=60s
+            | stats count by _time src_ip
+            | where count > 15
+            | stats dc(src_ip) as campaigns
+          </query>
+          <earliest>-1h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="colorBy">value</option>
+        <option name="colorMode">block</option>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xdc4e41"]</option>
+        <option name="rangeValues">[0,1]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+  </row>
+
+  <!-- ==================== ROW 2: LIVE ALERT FEED ==================== -->
+  <row>
+    <panel>
+      <title>Live Alert Feed — AI Triage Decisions</title>
+      <table>
+        <search>
+          <query>
+            index=main sourcetype=atdp_triage
+            | eval risk_color=case(risk_score>=80,"critical",risk_score>=50,"high",risk_score>=20,"medium",true(),"low")
+            | table _time, risk_score, risk_color, mitre_attack_technique, mitre_atlas_technique,
+                    likely_actor_type, is_deception_layer_hit, recommended_action, src_ip
+            | sort -_time
+            | head 50
+          </query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+          <refresh>30s</refresh>
+          <refreshType>delay</refreshType>
+        </search>
+        <option name="wrap">false</option>
+        <option name="rowNumbers">true</option>
+        <option name="dataOverlayMode">none</option>
+        <format type="color" field="risk_score">
+          <colorPalette type="minMidMax" maxColor="#DC4E41" midColor="#F8BE34" minColor="#53A051"/>
+          <scale type="minMidMax" mid="50"/>
+        </format>
+        <format type="color" field="is_deception_layer_hit">
+          <colorPalette type="map">{"true": "#DC4E41", "false": "#53A051"}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <!-- ==================== ROW 3: MITRE COVERAGE ==================== -->
+  <row>
+    <panel>
+      <title>MITRE ATT&amp;CK Technique Coverage (Last 24h)</title>
+      <chart>
+        <search>
+          <query>
+            index=main sourcetype=atdp_triage
+            | stats count by mitre_attack_technique
+            | sort -count
+          </query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+          <refresh>60s</refresh>
+        </search>
+        <option name="charting.chart">bar</option>
+        <option name="charting.chart.showDataLabels">all</option>
+        <option name="charting.axisTitleX.text">ATT&amp;CK Technique</option>
+        <option name="charting.axisTitleY.text">Alert Count</option>
+        <option name="charting.drilldown">all</option>
+        <option name="charting.seriesColors">["#DC4E41","#F8BE34","#53A051","#0099E0"]</option>
+      </chart>
+    </panel>
+
+    <panel>
+      <title>MITRE ATLAS Technique Heatmap (Last 24h)</title>
+      <chart>
+        <search>
+          <query>
+            index=main sourcetype=atdp_triage mitre_atlas_technique!="N/A"
+            | stats count by mitre_atlas_technique
+            | sort -count
+          </query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+          <refresh>60s</refresh>
+        </search>
+        <option name="charting.chart">bar</option>
+        <option name="charting.chart.showDataLabels">all</option>
+        <option name="charting.axisTitleX.text">ATLAS Technique</option>
+        <option name="charting.axisTitleY.text">Alert Count</option>
+        <option name="charting.seriesColors">["#6B42C8","#A855F7","#C084FC"]</option>
+      </chart>
+    </panel>
+  </row>
+
+  <!-- ==================== ROW 4: HONEYPOT DETAIL ==================== -->
+  <row>
+    <panel>
+      <title>Honeypot Hit Counter by Attacker IP</title>
+      <chart>
+        <search>
+          <query>
+            sourcetype=cowrie
+            | stats count by src_ip, eventid
+            | sort -count
+            | head 20
+          </query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+          <refresh>30s</refresh>
+          <refreshType>delay</refreshType>
+        </search>
+        <option name="charting.chart">pie</option>
+        <option name="charting.drilldown">all</option>
+      </chart>
+    </panel>
+
+    <panel>
+      <title>Honeypot Session Timeline</title>
+      <chart>
+        <search>
+          <query>
+            sourcetype=cowrie
+            | timechart span=5m count by eventid
+          </query>
+          <earliest>-6h</earliest>
+          <latest>now</latest>
+          <refresh>30s</refresh>
+          <refreshType>delay</refreshType>
+        </search>
+        <option name="charting.chart">area</option>
+        <option name="charting.axisTitleX.text">Time</option>
+        <option name="charting.axisTitleY.text">Events</option>
+        <option name="charting.chart.stackMode">stacked</option>
+      </chart>
+    </panel>
+
+    <panel>
+      <title>Cowrie — Attacker Command Log</title>
+      <table>
+        <search>
+          <query>
+            sourcetype=cowrie eventid="cowrie.command.input"
+            | table _time, src_ip, session, input
+            | sort -_time
+            | head 30
+          </query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+          <refresh>15s</refresh>
+          <refreshType>delay</refreshType>
+        </search>
+      </table>
+    </panel>
+  </row>
+
+  <!-- ==================== ROW 5: DECOY FILE TIMELINE ==================== -->
+  <row>
+    <panel>
+      <title>Decoy File Access Timeline</title>
+      <chart>
+        <search>
+          <query>
+            sourcetype="linux:audit" key=decoy_access type=SYSCALL
+            | rex field=message "name=\"(?P&lt;decoy_file&gt;[^\"]+)\""
+            | timechart span=5m count by decoy_file
+          </query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+          <refresh>30s</refresh>
+          <refreshType>delay</refreshType>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.axisTitleX.text">Time</option>
+        <option name="charting.axisTitleY.text">Access Count</option>
+        <option name="charting.legend.placement">bottom</option>
+      </chart>
+    </panel>
+
+    <panel>
+      <title>Decoy File Access Detail</title>
+      <table>
+        <search>
+          <query>
+            sourcetype="linux:audit" key=decoy_access type=SYSCALL
+            | rex field=message "name=\"(?P&lt;decoy_file&gt;[^\"]+)\""
+            | rex field=message "comm=\"(?P&lt;process&gt;[^\"]+)\""
+            | rex field=message "exe=\"(?P&lt;executable&gt;[^\"]+)\""
+            | rex field=message "pid=(?P&lt;pid&gt;\d+)"
+            | table _time, decoy_file, process, executable, pid
+            | sort -_time
+            | head 25
+          </query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+          <refresh>15s</refresh>
+          <refreshType>delay</refreshType>
+        </search>
+        <option name="wrap">false</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- ==================== ROW 6: ATTACKER KILL CHAIN ==================== -->
+  <row>
+    <panel>
+      <title>Attacker Kill Chain Progression (Correlated by src_ip)</title>
+      <table>
+        <search>
+          <query>
+            (sourcetype=linux_secure ("Failed password" OR "Invalid user")
+             | rex field=message "from (?P&lt;src_ip&gt;\d+\.\d+\.\d+\.\d+)"
+             | eval phase="1-Brute Force", technique="T1110.001")
+            OR
+            (sourcetype=cowrie eventid="cowrie.session.connect"
+             | eval phase="2-Honeypot Entry", technique="T1021.004")
+            OR
+            (sourcetype="linux:audit" key=decoy_access type=SYSCALL
+             | eval phase="3-Decoy File Access", technique="T1083/T1005")
+            | stats values(phase) as kill_chain_phases, count by src_ip
+            | eval progression_depth=mvcount(kill_chain_phases)
+            | sort -progression_depth
+            | head 20
+          </query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+          <refresh>60s</refresh>
+          <refreshType>delay</refreshType>
+        </search>
+        <option name="wrap">false</option>
+        <format type="color" field="progression_depth">
+          <colorPalette type="minMidMax" maxColor="#DC4E41" midColor="#F8BE34" minColor="#53A051"/>
+          <scale type="minMidMax" mid="2"/>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+</dashboard>
