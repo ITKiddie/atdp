@@ -1,0 +1,63 @@
+title: Honeypot Service Interaction - Cowrie SSH Port 2222
+id: 4d5e6f7a-b8c9-0123-defa-345678901234
+status: production
+description: >
+    Detects any TCP connection attempt to port 2222, which exclusively hosts
+    a Cowrie SSH honeypot. Port 2222 is not advertised in DNS, not referenced
+    in any application config, and has never received legitimate traffic in
+    baseline telemetry. Any connection is therefore a confirmed indicator of
+    active reconnaissance or exploitation attempt. AI-driven attackers reach
+    this port via automated port scan enumeration; human attackers typically
+    only find it after reading decoy files that reference it. Either path
+    confirms hostile access and should trigger immediate incident response.
+references:
+    - https://attack.mitre.org/techniques/T1021/004/
+    - https://attack.mitre.org/techniques/T1078/
+    - https://attack.mitre.org/techniques/T1190/
+    - https://atlas.mitre.org/techniques/AML.T0000/
+    - https://atlas.mitre.org/techniques/AML.T0047/
+    - https://github.com/cowrie/cowrie
+author: ATDP Detection Engineering
+date: 2024/01/15
+modified: 2024/01/15
+tags:
+    # MITRE ATT&CK
+    - attack.initial_access
+    - attack.t1190
+    - attack.lateral_movement
+    - attack.t1021.004
+    - attack.credential_access
+    - attack.t1078
+    # MITRE ATLAS - ML Attack Staging: LLM orchestrator maps discovered ports
+    # to likely service types and prioritizes SSH for credential-reuse attempts
+    - atlas.aml.t0000
+    # MITRE ATLAS - ML-Enabled Product or Service: attacker AI is targeting
+    # what it infers to be a network service, potentially unaware it is a
+    # deception system designed to fingerprint AI-assisted attack tooling
+    - atlas.aml.t0047
+logsource:
+    product: cowrie
+    service: honeypot
+detection:
+    cowrie_connection:
+        eventid:
+            - 'cowrie.session.connect'
+            - 'cowrie.login.failed'
+            - 'cowrie.login.success'
+            - 'cowrie.command.input'
+    honeypot_port:
+        dst_port: 2222
+    condition: cowrie_connection or honeypot_port
+falsepositives:
+    - None. Port 2222 is exclusively a deception surface with no legitimate use.
+      Zero-FP rule; any trigger is confirmed hostile action.
+level: critical
+fields:
+    - src_ip
+    - src_port
+    - dst_port
+    - username
+    - password
+    - eventid
+    - session
+    - _time
