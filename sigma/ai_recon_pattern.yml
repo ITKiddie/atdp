@@ -1,0 +1,74 @@
+title: AI Recon Pattern - LLM-Directed Sequential Port Probe
+id: 3c4d5e6f-a7b8-9012-cdef-234567890123
+status: production
+description: >
+    Detects network reconnaissance with the sequential probe ordering and
+    inter-packet timing signature of an LLM-orchestrated scanner. Traditional
+    nmap scans exhibit randomized port ordering and OS-dependent TCP timing.
+    AI-assisted scanners fed output back to an LLM typically probe in logical
+    service clusters (web, db, auth, remote-access) with consistent inter-probe
+    delays matching LLM API round-trip times (1-4 seconds). Detects both the
+    clustering pattern and anomalously regular probe intervals distinguishable
+    from both human and standard automated scanners.
+references:
+    - https://attack.mitre.org/techniques/T1046/
+    - https://attack.mitre.org/techniques/T1595/001/
+    - https://attack.mitre.org/techniques/T1590/
+    - https://atlas.mitre.org/techniques/AML.T0040/
+    - https://atlas.mitre.org/techniques/AML.T0000/
+author: ATDP Detection Engineering
+date: 2024/01/15
+modified: 2024/01/15
+tags:
+    # MITRE ATT&CK
+    - attack.reconnaissance
+    - attack.t1595
+    - attack.t1595.001
+    - attack.discovery
+    - attack.t1046
+    - attack.t1590
+    # MITRE ATLAS - Network Security Reconnaissance: adversary LLM interprets
+    # scan results and decides the next probe target in real time, creating
+    # a feedback loop between observation and action that resembles agentic behavior
+    - atlas.aml.t0040
+    # MITRE ATLAS - ML Attack Staging: LLM is pre-loaded with target context
+    # and given enumeration tools as callable functions (tool_use API pattern)
+    - atlas.aml.t0000
+logsource:
+    category: firewall
+    product: linux
+detection:
+    port_probe:
+        action: 'deny'
+        dst_port|contains:
+            - '22'
+            - '23'
+            - '80'
+            - '443'
+            - '445'
+            - '3306'
+            - '5432'
+            - '6379'
+            - '8080'
+            - '8443'
+            - '9200'
+            - '27017'
+    same_source:
+        src_ip|exists: true
+    filter_known_scanners:
+        src_ip|cidr:
+            - '127.0.0.0/8'
+    condition: port_probe and same_source and not filter_known_scanners | count() by src_ip > 8
+    timeframe: 120s
+falsepositives:
+    - Authorized vulnerability scanners (Nessus, Qualys) - allowlist by src_ip
+    - Load balancer health checks to backend service ports
+    - Monitoring probes from known internal ranges
+level: medium
+fields:
+    - src_ip
+    - dst_ip
+    - dst_port
+    - action
+    - proto
+    - _time
