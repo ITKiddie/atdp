@@ -1,0 +1,67 @@
+## ATDP auditd Rules — Decoy File Watcher
+## Deploy: sudo cp audit.rules /etc/audit/rules.d/atdp-decoys.rules
+##         sudo augenrules --load
+##         sudo systemctl restart auditd
+##
+## These rules watch every decoy honeytoken path for any open/read/create
+## syscall and emit JSON-formatted events to /var/log/audit/audit.log.
+## Splunk Universal Forwarder picks these up via inputs.conf (monitor:///var/log/audit/).
+##
+## Key: "decoy_access" — used in Sigma rule decoy_file_access.yml to correlate.
+## Each event includes: name (path), pid, ppid, uid, auid, comm (process name),
+## exe (full path), success, and key fields.
+
+## ── Kernel buffer and backlog settings ────────────────────────────────────────
+-b 8192
+--backlog_wait_time 60000
+
+## ── File watches: open/read/exec on every decoy path ─────────────────────────
+
+## /etc/passwd.bak — fake passwd with service account usernames
+-a always,exit -F path=/etc/passwd.bak         -F perm=rwa -F key=decoy_access
+
+## /etc/shadow.old — fake shadow with SHA-512 formatted fake hashes
+-a always,exit -F path=/etc/shadow.old          -F perm=rwa -F key=decoy_access
+
+## /var/log/auth.log.1 — fake auth log with suspicious successful login
+-a always,exit -F path=/var/log/auth.log.1      -F perm=rwa -F key=decoy_access
+
+## /var/log/secure.bak — fake CentOS secure log
+-a always,exit -F path=/var/log/secure.bak      -F perm=rwa -F key=decoy_access
+
+## /root/.ssh/id_rsa.bak — fake RSA private key (invalid but realistic PEM)
+-a always,exit -F path=/root/.ssh/id_rsa.bak    -F perm=rwa -F key=decoy_access
+
+## /root/.bash_history.old — fake history with lateral movement commands
+-a always,exit -F path=/root/.bash_history.old  -F perm=rwa -F key=decoy_access
+
+## /etc/crontab.bak — fake cron with internal service job names
+-a always,exit -F path=/etc/crontab.bak         -F perm=rwa -F key=decoy_access
+
+## /root/.aws/credentials.bak — fake AWS creds in boto3 format
+-a always,exit -F path=/root/.aws/credentials.bak -F perm=rwa -F key=decoy_access
+
+## ── Watch the .aws directory itself (directory listing counts as recon) ────────
+-a always,exit -F dir=/root/.aws/               -F perm=r   -F key=decoy_access
+
+## ── Watch .ssh directory ─────────────────────────────────────────────────────
+-a always,exit -F dir=/root/.ssh/               -F perm=r   -F key=decoy_access
+
+## ── Alert on any process trying to exfiltrate via scp/nc/curl ────────────────
+## (Complements decoy access events — if attacker reads then immediately exfils,
+##  these syscall watches will catch the transfer tool being exec'd.)
+-a always,exit -F arch=b64 -S execve -F exe=/usr/bin/scp    -F key=exfil_tool
+-a always,exit -F arch=b64 -S execve -F exe=/usr/bin/nc     -F key=exfil_tool
+-a always,exit -F arch=b64 -S execve -F exe=/bin/nc         -F key=exfil_tool
+-a always,exit -F arch=b64 -S execve -F exe=/usr/bin/curl   -F key=exfil_tool
+-a always,exit -F arch=b64 -S execve -F exe=/usr/bin/wget   -F key=exfil_tool
+-a always,exit -F arch=b64 -S execve -F exe=/usr/bin/rsync  -F key=exfil_tool
+
+## ── Watch for privilege escalation attempts ───────────────────────────────────
+-a always,exit -F arch=b64 -S setuid  -F key=privilege_escalation
+-a always,exit -F arch=b64 -S setresuid -F key=privilege_escalation
+-a always,exit -F arch=b64 -S execve -F exe=/usr/bin/sudo   -F key=sudo_exec
+-a always,exit -F arch=b64 -S execve -F exe=/bin/su         -F key=sudo_exec
+
+## ── Make the ruleset immutable (comment out during development) ───────────────
+## -e 2
