@@ -2,7 +2,7 @@
 
 **Built by [IT-Kiddie](https://github.com/ITKiddie)**
 
-> AI-powered attacker vs AI-powered defender — with a full deception layer in between. Both agents speak MITRE ATT&CK and ATLAS in real time.
+> AI-powered attacker vs AI-powered defender with a full deception layer in between. Both agents speak MITRE ATT&CK and ATLAS in real time.
 
 ---
 
@@ -10,7 +10,7 @@
 
 Most detection engineering work assumes a human on the other end of the keyboard. I wanted to flip that assumption and ask: *what does active defense actually look like when the attacker is also an AI?*
 
-LLM-orchestrated tools don't behave like human attackers. They don't get tired, they don't make timing mistakes, and they read your `/etc/shadow.old` the same way they'd read any other structured text — because to them it IS just structured text. That changes how you detect them.
+LLM-orchestrated tools don't behave like human attackers. They don't get tired, they don't make timing mistakes, and they read your `/etc/shadow.old` the same way they'd read any other structured text because to them it IS just structured text. That changes how you detect them.
 
 This platform has three layers:
 
@@ -22,7 +22,7 @@ This platform has three layers:
   as it attacks                            Fake credentials
 ```
 
-The thing that makes this different: the **attacker AI self-annotates its own actions with MITRE ATLAS techniques** as it executes them. So when the defender AI responds, both sides are speaking the exact same framework language. That's the core demo moment.
+The thing that makes this different: the attacker AI self-annotates its own actions with MITRE ATLAS techniques as it executes them. So when the defender AI responds, both sides are speaking the exact same framework language.
 
 ---
 
@@ -57,7 +57,7 @@ atdp/
 ### 1. AI-Assisted SSH Brute Force
 **`sigma/ai_ssh_brute_force.yml`**
 
-Human attackers have noisy, inconsistent timing between attempts. AI-orchestrated tools hit with near-clockwork regularity because each attempt goes through the same LLM API round-trip. This rule catches that — not just the volume, but the pattern.
+Human attackers have noisy, inconsistent timing between attempts. AI-orchestrated tools hit with regularity because each attempt goes through the same LLM API round-trip. This rule catches that and not just the volume, but the pattern.
 
 Threshold: `> 15 failures from same src_ip within 60s`
 
@@ -76,7 +76,7 @@ Threshold: `> 15 failures from same src_ip within 60s`
 ### 2. Decoy File Access
 **`sigma/decoy_file_access.yml`**
 
-Zero false positives. These files don't exist for any legitimate reason — they're honeytokens. Any process that opens them (`openat` syscall via auditd, `key=decoy_access`) is almost certainly automated enumeration. The file names were specifically chosen to match what AI recon tools search for: `credentials.bak`, `id_rsa.bak`, `shadow.old`.
+Zero false positives. These files don't exist for any legitimate reason, they're honeytokens. Any process that opens them (`openat` syscall via auditd, `key=decoy_access`) is almost certainly automated enumeration. The file names were specifically chosen to match what AI recon tools search for: `credentials.bak`, `id_rsa.bak`, `shadow.old`.
 
 | Framework | ID | Technique |
 |---|---|---|
@@ -124,7 +124,8 @@ Port 2222 runs Cowrie exclusively. It's not in DNS, not in any config, has never
 
 ---
 
-## Deception Layer — Honeytokens
+## Deception Layer:
+Honeytokens
 
 `generate_decoys.py` plants 8 files that look genuinely valuable to automated tools:
 
@@ -204,7 +205,7 @@ python3 attacker_agent.py --target 127.0.0.1
 
 ## Threat Model
 
-Traditional detections are built for human behavioral signatures. This platform explicitly models **AI agents as attackers** — tools where an LLM reasons about target state, selects next actions from a tool palette, and interprets results in a feedback loop.
+Traditional detections are built for human behavioral signatures. This platform explicitly models **AI agents as attackers** tools where an LLM reasons about target state, selects next actions from a tool palette, and interprets results in a feedback loop.
 
 Observable differences from human attackers:
 - **Timing regularity** — API latency creates consistent inter-action delays
@@ -216,6 +217,6 @@ MITRE ATLAS covers adversarial ML. ATDP bridges it with classic ATT&CK tradecraf
 
 ---
 
-*Built for Active Defense research. All simulation components are for use against dedicated lab infrastructure only.*
+*Built for Active Defense research. All simulation components are for use against dedicated lab infrastructure and educational purposes only.*
 
 **— [IT-Kiddie](https://github.com/ITKiddie)**
