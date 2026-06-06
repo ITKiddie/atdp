@@ -1,0 +1,72 @@
+title: Deception Layer - Decoy File Access via Auditd
+id: 2a3b4c5d-e6f7-8901-bcde-f12345678901
+status: production
+description: >
+    Detects any process opening or reading files that exist exclusively as
+    deception-layer honeytokens. No legitimate process reads these paths under
+    normal operations; any access is high-fidelity evidence of post-exploitation
+    enumeration. File names were chosen to appear irresistible to both human
+    attackers and AI recon tools performing keyword-based file discovery.
+    The bak/old extensions match common admin backup naming conventions that
+    automated scanners explicitly search for.
+references:
+    - https://attack.mitre.org/techniques/T1083/
+    - https://attack.mitre.org/techniques/T1005/
+    - https://attack.mitre.org/techniques/T1552/001/
+    - https://atlas.mitre.org/techniques/AML.T0035/
+    - https://atlas.mitre.org/techniques/AML.T0048/
+author: ATDP Detection Engineering
+date: 2024/01/15
+modified: 2024/01/15
+tags:
+    # MITRE ATT&CK
+    - attack.discovery
+    - attack.t1083
+    - attack.collection
+    - attack.t1005
+    - attack.credential_access
+    - attack.t1552.001
+    # MITRE ATLAS - ML Artifact Collection: adversary AI harvests credential
+    # material to use as training data for downstream model-assisted attacks
+    - atlas.aml.t0035
+    # MITRE ATLAS - Victim Monitoring: automated agent polls target environment
+    # for high-value file paths identified during model-assisted enumeration
+    - atlas.aml.t0048
+logsource:
+    product: linux
+    service: auditd
+detection:
+    decoy_file_opened:
+        type: 'SYSCALL'
+        syscall:
+            - 'open'
+            - 'openat'
+            - 'read'
+            - 'creat'
+        key: 'decoy_access'
+    decoy_paths:
+        name|endswith:
+            - '/etc/passwd.bak'
+            - '/etc/shadow.old'
+            - '/var/log/auth.log.1'
+            - '/var/log/secure.bak'
+            - '/root/.ssh/id_rsa.bak'
+            - '/root/.bash_history.old'
+            - '/etc/crontab.bak'
+            - '/root/.aws/credentials.bak'
+    condition: decoy_file_opened and decoy_paths
+falsepositives:
+    - None expected. If triggered, treat as confirmed hostile access.
+    - Backup automation touching these paths would indicate misconfiguration
+      and should be fixed; do NOT add as a filter.
+level: critical
+fields:
+    - name
+    - pid
+    - ppid
+    - uid
+    - auid
+    - comm
+    - exe
+    - key
+    - _time
