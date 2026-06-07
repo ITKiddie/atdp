@@ -1,33 +1,14 @@
-# Autonomous Threat Defense Platform (ATDP)
-
 **Built by [IT-Kiddie](https://github.com/ITKiddie)**
-
 > AI-powered attacker vs AI-powered defender with a full deception layer in between. Both agents speak MITRE ATT&CK and ATLAS in real time.
-
 ---
 
-## Why I Built This
+Why I Built This:
 
 Most detection engineering work assumes a human on the other end of the keyboard. I wanted to flip that assumption and ask: *what does active defense actually look like when the attacker is also an AI?*
 
 LLM-orchestrated tools don't behave like human attackers. They don't get tired, they don't make timing mistakes, and they read your `/etc/shadow.old` the same way they'd read any other structured text because to them it IS just structured text. That changes how you detect them.
 
-This platform has three layers:
-
-```
-[ AI Attacker Agent ]  ──recon/exploit──►  [ Deception Layer ]  ──alerts──►  [ AI Defender / Triage Agent ]
-       │                                         │                                       │
-  Narrates its own MITRE                   Cowrie honeypot              Maps alert to ATT&CK + ATLAS,
-  ATT&CK + ATLAS technique                 Decoy files (auditd)         scores risk, recommends action
-  as it attacks                            Fake credentials
-```
-
-The thing that makes this different: the attacker AI self-annotates its own actions with MITRE ATLAS techniques as it executes them. So when the defender AI responds, both sides are speaking the exact same framework language.
-
----
-
-## Repo Structure
-
+Repo Structure:
 ```
 atdp/
 ├── sigma/                          # Detection-as-Code (Sigma v2)
@@ -36,7 +17,7 @@ atdp/
 │   ├── ai_recon_pattern.yml
 │   └── honeypot_service_interaction.yml
 ├── .github/workflows/
-│   └── validate-detections.yml     # CI/CD: validate → SPL → test → MITRE coverage report
+│   └── validate-detections.yml     # CI/CD: validate - SPL - test - MITRE coverage report
 ├── tests/
 │   ├── fixtures/                   # TP + TN log samples for each rule
 │   └── test_detections.py          # 27-test pytest suite (all green)
@@ -52,12 +33,12 @@ atdp/
 
 ---
 
-## Detection Rules
+Detection Rules:
 
-### 1. AI-Assisted SSH Brute Force
+1. AI-Assisted SSH Brute Force
 **`sigma/ai_ssh_brute_force.yml`**
 
-Human attackers have noisy, inconsistent timing between attempts. AI-orchestrated tools hit with regularity because each attempt goes through the same LLM API round-trip. This rule catches that and not just the volume, but the pattern.
+AI-orchestrated tools hit with regularity because each attempt goes through the same LLM API. This rule catches that and not just the volume, but the pattern.
 
 Threshold: `> 15 failures from same src_ip within 60s`
 
@@ -68,15 +49,12 @@ Threshold: `> 15 failures from same src_ip within 60s`
 | MITRE ATT&CK | T1078 | Valid Accounts |
 | MITRE ATLAS | AML.T0000 | ML Attack Staging |
 | MITRE ATLAS | AML.T0040 | Network Security Reconnaissance |
-
-**Level:** High
-
 ---
 
-### 2. Decoy File Access
+2. Decoy File Access
 **`sigma/decoy_file_access.yml`**
 
-Zero false positives. These files don't exist for any legitimate reason, they're honeytokens. Any process that opens them (`openat` syscall via auditd, `key=decoy_access`) is almost certainly automated enumeration. The file names were specifically chosen to match what AI recon tools search for: `credentials.bak`, `id_rsa.bak`, `shadow.old`.
+Zero false positives. These files are honeytokens. Any process that opens them (`openat` syscall via auditd, `key=decoy_access`) is almost certainly automated enumeration. The file names were specifically chosen to match what AI recon tools search for: `credentials.bak`, `id_rsa.bak`, `shadow.old`.
 
 | Framework | ID | Technique |
 |---|---|---|
@@ -86,14 +64,13 @@ Zero false positives. These files don't exist for any legitimate reason, they're
 | MITRE ATLAS | AML.T0035 | ML Artifact Collection |
 | MITRE ATLAS | AML.T0048 | Victim Monitoring |
 
-**Level:** Critical — zero-FP, any trigger = immediate response
-
+Any trigger = immediate response
 ---
 
-### 3. AI Recon Pattern
+3. AI Recon Pattern
 **`sigma/ai_recon_pattern.yml`**
 
-Standard nmap randomizes port order. When an LLM is in the loop deciding what to probe next, it groups by service category (web → db → auth → remote-access) and the inter-probe delay is regular because every decision costs an API round-trip. This rule catches that cluster+regularity pattern in firewall deny logs.
+When an LLM is in the loop deciding what to probe next, it groups by service category (web, db, auth and remote-access) and the inter-probe delay is regular because every decision costs an API round-trip. This rule catches that cluster+regularity pattern in firewall deny logs.
 
 | Framework | ID | Technique |
 |---|---|---|
@@ -103,14 +80,12 @@ Standard nmap randomizes port order. When an LLM is in the loop deciding what to
 | MITRE ATLAS | AML.T0040 | Network Security Reconnaissance |
 | MITRE ATLAS | AML.T0000 | ML Attack Staging |
 
-**Level:** Medium
-
 ---
 
-### 4. Honeypot Service Interaction
+4. Honeypot Service Interaction
 **`sigma/honeypot_service_interaction.yml`**
 
-Port 2222 runs Cowrie exclusively. It's not in DNS, not in any config, has never received legitimate traffic. Any connection is confirmed hostile — doesn't matter if it's a human or an AI agent that found it via port scan. Zero-FP, immediate escalation.
+Port 2222 runs Cowrie exclusively. Any connection is confirmed hostile and doesn't matter if it's a human or an AI agent that found it via port scan. Zero-FP and immediate escalation.
 
 | Framework | ID | Technique |
 |---|---|---|
@@ -120,11 +95,9 @@ Port 2222 runs Cowrie exclusively. It's not in DNS, not in any config, has never
 | MITRE ATLAS | AML.T0000 | ML Attack Staging |
 | MITRE ATLAS | AML.T0047 | ML-Enabled Product or Service |
 
-**Level:** Critical
-
 ---
 
-## Deception Layer:
+Deception Layer:
 Honeytokens
 
 `generate_decoys.py` plants 8 files that look genuinely valuable to automated tools:
@@ -142,17 +115,16 @@ Honeytokens
 
 ---
 
-## Platform Components
+Platform Components
 
 | Script | What it does |
 |---|---|
-| `triage_agent.py` | Accepts Splunk alert JSON → Claude → structured triage decision (risk score, ATT&CK + ATLAS tags, recommended action) |
-| `attacker_agent.py` | LLM-orchestrated attacker that reasons through recon → access → enumeration → exfil while narrating its own MITRE ATT&CK + ATLAS techniques |
+| `triage_agent.py` | Accepts Splunk alert JSON, Claude structured triage decision (risk score, ATT&CK + ATLAS tags, recommended action) |
+| `attacker_agent.py` | LLM-orchestrated attacker that reasons through recon, access and enumeration while documenting MITRE ATLAS and MITRE ATT&CK techniques. |
 
 ---
 
-## CI/CD Pipeline
-
+CI/CD Pipeline
 Every push to main runs `.github/workflows/validate-detections.yml`:
 
 1. Sigma syntax validation (`sigma check`)
@@ -162,7 +134,7 @@ Every push to main runs `.github/workflows/validate-detections.yml`:
 
 ---
 
-## Quick Start
+Quick Start⬇️
 
 ```bash
 # On the target CentOS VM — one script does everything
@@ -180,7 +152,7 @@ python3 attacker_agent.py --target 127.0.0.1
 
 ---
 
-## MITRE Coverage Summary
+MITRE Coverage Summary
 
 | ATT&CK Technique | ATLAS Technique | Detecting Rule |
 |---|---|---|
@@ -192,7 +164,7 @@ python3 attacker_agent.py --target 127.0.0.1
 
 ---
 
-## Tech Stack
+Tech Stack
 
 - **Detection layer:** Sigma v2 → SPL (pySigma + Splunk backend)
 - **Monitoring:** Splunk Enterprise + Universal Forwarder + auditd
@@ -203,9 +175,9 @@ python3 attacker_agent.py --target 127.0.0.1
 
 ---
 
-## Threat Model
+Threat Model
 
-Traditional detections are built for human behavioral signatures. This platform explicitly models **AI agents as attackers** tools where an LLM reasons about target state, selects next actions from a tool palette, and interprets results in a feedback loop.
+This platform explicitly models AI agents as attackers tools where an LLM reasons about target state, selects next actions from a tool palette, and interprets results in a feedback loop.
 
 Observable differences from human attackers:
 - **Timing regularity** — API latency creates consistent inter-action delays
@@ -213,10 +185,10 @@ Observable differences from human attackers:
 - **Vocabulary overlap** — AI tools search for files using the same keyword patterns used to describe them in security docs (`credentials`, `shadow`, `id_rsa`)
 - **Self-documentation** — Agentic AI tools often log or narrate reasoning, creating forensic artifacts not present in human attacks
 
-MITRE ATLAS covers adversarial ML. ATDP bridges it with classic ATT&CK tradecraft to cover the emerging case where **the LLM itself is the attacker's reasoning engine**.
+MITRE ATLAS covers adversarial ML. ATDP bridges it with classic ATT&CK tradecraft to cover the emerging case where and the LLM itself is the attacker's reasoning engine.
 
 ---
 
-*Built for Active Defense research. All simulation components are for use against dedicated lab infrastructure and educational purposes only.*
+All simulation components are for use against dedicated lab infrastructure and educational purposes only.*
 
 **— [IT-Kiddie](https://github.com/ITKiddie)**
