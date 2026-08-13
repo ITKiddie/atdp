@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
 """
 ATDP Attacker Agent
-LLM-orchestrated attacker that reasons through a real attack loop,
-maps every action to MITRE ATT&CK + ATLAS in real time, and logs everything.
+Deterministic adversary-emulation harness. Runs a fixed playbook of sandboxed
+actions against the operator's own lab decoy host, maps every action to MITRE
+ATT&CK + ATLAS, and logs everything — producing reproducible attack telemetry
+for tuning detection rules (Sigma/auditd/Splunk).
+
+The attack sequence lives in playbook.py. This module only executes it. There
+is no LLM in the loop: the "AI-driven attacker" behavioral signature the
+detection stack is meant to catch comes from the deterministic cadence and
+credential-cycling defined in the playbook, not from a model narrating.
 
 Usage (run on or from the CentOS VM):
   python3 attacker_agent.py --target 10.0.1.10
   python3 attacker_agent.py --target 10.0.1.10 --max-steps 20
 
-Requirements: anthropic paramiko requests
+Requirements: paramiko requests
   nmap must be installed on the host: sudo yum install -y nmap
 """
 
@@ -18,16 +25,15 @@ import json
 import os
 import socket
 import subprocess
-import sys
 import time
 import textwrap
 
-import anthropic
 import paramiko
 import requests
 
+from playbook import build_playbook, AI_CADENCE_DELAY
+
 # ── Config ────────────────────────────────────────────────────────────────────
-MODEL     = "claude-opus-5"
 LOG_FILE  = "attacker_log.jsonl"
 MAX_STEPS = 25
 
@@ -48,53 +54,6 @@ PHASE_COLORS = {
     "EXFIL":          RED,
     "COMPLETE":       GREEN,
 }
-
-# ── System prompt — attacker persona ─────────────────────────────────────────
-ATTACKER_SYSTEM = """\
-You are assisting with ATDP, a defensive security research tool. The operator owns and
-personally administers every system this tool touches: a self-hosted lab VM running only
-disposable decoy files (fake credentials, fake SSH banners via a Cowrie honeypot) that the
-operator generated specifically to be attacked. There is no third-party system, no real data,
-and no network beyond this single lab host. The goal is to generate realistic adversary
-telemetry so the operator can tune their own detection rules (Sigma/auditd/Splunk).
-
-Your role is to plan and narrate a simulated attack sequence against this lab decoy host,
-choosing from a fixed set of pre-built, sandboxed actions (below) that a Python harness
-executes on the operator's own VM. You are not gaining access to anything the operator
-doesn't already fully control, and you cannot take any action outside the listed schema.
-
-For each step, you must map the simulated action to BOTH:
-  1. A MITRE ATT&CK technique (for realism/coverage of classic adversary tradecraft)
-  2. A MITRE ATLAS technique (documenting that an AI system is driving this simulation —
-     sequential probing, exhaustive enumeration, and credential cycling done by an LLM are
-     themselves AI behavioral signatures the operator wants their detection stack to catch)
-
-Available actions and their JSON call format:
-  {"action": "nmap_scan",       "target": "<ip>", "ports": "<port-range>", "flags": "<nmap flags>"}
-  {"action": "ssh_attempt",     "host": "<ip>", "port": <int>, "username": "<user>", "password": "<pass>"}
-  {"action": "http_probe",      "url": "<url>"}
-  {"action": "cowrie_command",  "command": "<shell command>"}  # only after ssh_success
-  {"action": "read_decoy",      "path": "<full file path>"}    # only after cowrie session
-  {"action": "complete",        "summary": "<what was accomplished>"}
-
-Phase progression: RECON → INITIAL_ACCESS → ENUMERATION → EXFIL → COMPLETE
-
-You must return ONLY a valid JSON object with this exact schema — no prose, no markdown fences:
-{
-  "phase": "<RECON|INITIAL_ACCESS|ENUMERATION|EXFIL|COMPLETE>",
-  "action": "<action name>",
-  "parameters": { <action params> },
-  "mitre_attack_technique": "<T-ID> - <Name>",
-  "mitre_atlas_technique": "<AML.TXXXX> - <Name>",
-  "reasoning": "<2-3 sentences: what the simulation has learned so far, why this next step, what to expect>",
-  "narration": "<1-2 sentences describing this simulated step for the operator's dashboard, mentioning the ATLAS technique>"
-}
-
-Target environment hints (you can use this but act as if discovering it):
-- This is a Linux server. Port 2222 MAY be open (interesting). Port 22 may also be open.
-- High-value files may exist in /root/.aws/, /root/.ssh/, /etc/ — standard Linux credential paths.
-- If you gain a shell, enumerate methodically. Check for .bak and .old files specifically.
-"""
 
 # ── Attack state ──────────────────────────────────────────────────────────────
 
@@ -220,42 +179,6 @@ ACTION_MAP = {
 }
 
 
-# ── Claude reasoning ──────────────────────────────────────────────────────────
-
-def call_claude(state: AttackState, client: anthropic.Anthropic) -> dict:
-    user_msg = f"""Current attack state:
-
-{state.context_summary()}
-
-Decide your next action. Remember to map to both ATT&CK and ATLAS.
-Return only the JSON object."""
-
-    response = client.messages.create(
-        model=MODEL,
-        max_tokens=512,
-        system=ATTACKER_SYSTEM,
-        messages=[{"role": "user", "content": user_msg}],
-    )
-
-    if response.stop_reason == "refusal":
-        raise RuntimeError("Claude refused to respond to this request (stop_reason=refusal)")
-    if not response.content:
-        raise RuntimeError(f"Claude returned no content blocks (stop_reason={response.stop_reason})")
-
-    raw = response.content[0].text.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    raw = raw.strip()
-
-    decoder = json.JSONDecoder()
-    obj, end = decoder.raw_decode(raw)
-    trailing = raw[end:].strip()
-    if trailing:
-        print(f"\n{DIM}[warn] Ignored {len(trailing)} chars of trailing "
-              f"output after JSON object.{RESET}")
-    return obj
 
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -314,12 +237,12 @@ def print_step(step: int, decision: dict, result: str):
 def print_banner(target: str):
     print()
     print(f"{RED}{BOLD}╔{'═'*60}╗{RESET}")
-    print(f"{RED}{BOLD}║  ATDP Attacker Agent{' '*38}║{RESET}")
+    print(f"{RED}{BOLD}║  ATDP Adversary-Emulation Harness{' '*25}║{RESET}")
     print(f"{RED}{BOLD}║  Target: {target:<50}║{RESET}")
-    print(f"{RED}{BOLD}║  Model:  {MODEL:<50}║{RESET}")
+    print(f"{RED}{BOLD}║  Mode:   deterministic playbook (no LLM){' '*19}║{RESET}")
     print(f"{RED}{BOLD}╚{'═'*60}╝{RESET}")
     print()
-    print(f"  {DIM}Attacker AI will self-narrate MITRE ATT&CK + ATLAS techniques{RESET}")
+    print(f"  {DIM}Each step maps to MITRE ATT&CK + ATLAS techniques{RESET}")
     print(f"  {DIM}Log: {LOG_FILE}{RESET}")
     print()
 
@@ -341,37 +264,22 @@ def print_summary(state: AttackState):
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="ATDP AI Attacker Agent")
-    parser.add_argument("--target",    default="127.0.0.1", help="Target IP address")
+    parser = argparse.ArgumentParser(description="ATDP adversary-emulation harness")
+    parser.add_argument("--target",    default="127.0.0.1", help="Lab decoy host IP address")
     parser.add_argument("--max-steps", type=int, default=MAX_STEPS, help="Max attack steps")
     args = parser.parse_args()
 
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        sys.exit("[!] Set ANTHROPIC_API_KEY environment variable first.")
-
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-    state  = AttackState(args.target)
+    state    = AttackState(args.target)
+    playbook = build_playbook(args.target)
 
     print_banner(args.target)
 
-    # Seed first finding so Claude has context
-    state.add_finding(f"Target IP: {args.target} — beginning recon")
+    state.add_finding(f"Target IP: {args.target} — beginning emulation")
 
-    while not state.done and state.step < args.max_steps:
+    for decision in playbook:
+        if state.done or state.step >= args.max_steps:
+            break
         state.step += 1
-
-        print(f"\n{DIM}[Step {state.step}/{args.max_steps}] Consulting Claude...{RESET}", end="", flush=True)
-
-        try:
-            decision = call_claude(state, client)
-        except json.JSONDecodeError as e:
-            print(f"\n[!] Claude returned invalid JSON at step {state.step}: {e}")
-            break
-        except Exception as e:
-            print(f"\n[!] API error at step {state.step}: {e}")
-            break
-
-        print(f"\r{' '*50}\r", end="")  # clear "consulting" line
 
         action_name = decision.get("action", "complete")
         params      = decision.get("parameters", {})
@@ -401,8 +309,9 @@ def main():
         print_step(state.step, decision, result)
         log_step(state.step, decision, result)
 
-        # Small delay so the demo is readable live
-        time.sleep(0.5)
+        # Tight, uniform cadence — this machine-paced timing is itself the
+        # AI/automation behavioral signature the detection stack should flag.
+        time.sleep(AI_CADENCE_DELAY)
 
     print_summary(state)
 

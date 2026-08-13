@@ -26,7 +26,8 @@ atdp/
 ├── generate_decoys.py              # Creates 8 honeytokens on target VM
 ├── audit.rules                     # auditd watches for every decoy path
 ├── triage_agent.py                 # Claude-powered alert triage with structured JSON output
-├── attacker_agent.py               # LLM-orchestrated attacker (the demo centerpiece)
+├── attacker_agent.py               # deterministic adversary-emulation harness (the demo centerpiece)
+├── playbook.py                     # fixed attack sequence driving the harness
 ├── deploy_vm.sh                    # One-command CentOS setup script
 └── requirements.txt
 ```
@@ -120,7 +121,8 @@ Platform Components
 | Script | What it does |
 |---|---|
 | `triage_agent.py` | Accepts Splunk alert JSON, Claude structured triage decision (risk score, ATT&CK + ATLAS tags, recommended action) |
-| `attacker_agent.py` | LLM-orchestrated attacker that reasons through recon, access and enumeration while documenting MITRE ATLAS and MITRE ATT&CK techniques. |
+| `attacker_agent.py` | Deterministic adversary-emulation harness that runs a fixed playbook through recon, access and enumeration while documenting MITRE ATLAS and MITRE ATT&CK techniques. Reproducible telemetry, no LLM in the loop. |
+| `playbook.py` | The fixed attack sequence (credential list, decoy paths, cadence) the harness executes. |
 
 ---
 
@@ -140,13 +142,13 @@ Quick Start⬇️
 # On the target CentOS VM — one script does everything
 curl -sSL https://raw.githubusercontent.com/ITKiddie/atdp/main/deploy_vm.sh | sudo bash
 
-# Set your API key
+# Set your API key (needed only for the defensive triage agent)
 export ANTHROPIC_API_KEY=your_key_here
 
 # Run the triage agent against a demo alert
 python3 triage_agent.py --demo
 
-# Run the attacker agent against the lab VM
+# Run the adversary-emulation harness against the lab VM (no API key needed)
 python3 attacker_agent.py --target 127.0.0.1
 ```
 
