@@ -231,6 +231,11 @@ Return only the JSON object."""
         messages=[{"role": "user", "content": user_msg}],
     )
 
+    if response.stop_reason == "refusal":
+        raise RuntimeError("Claude refused to respond to this request (stop_reason=refusal)")
+    if not response.content:
+        raise RuntimeError(f"Claude returned no content blocks (stop_reason={response.stop_reason})")
+
     raw = response.content[0].text.strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
