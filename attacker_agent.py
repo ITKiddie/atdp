@@ -27,7 +27,7 @@ import paramiko
 import requests
 
 # ── Config ────────────────────────────────────────────────────────────────────
-MODEL     = "claude-opus-4-7"
+MODEL     = "claude-opus-5"
 LOG_FILE  = "attacker_log.jsonl"
 MAX_STEPS = 25
 
@@ -236,7 +236,15 @@ Return only the JSON object."""
         raw = raw.split("```")[1]
         if raw.startswith("json"):
             raw = raw[4:]
-    return json.loads(raw.strip())
+    raw = raw.strip()
+
+    decoder = json.JSONDecoder()
+    obj, end = decoder.raw_decode(raw)
+    trailing = raw[end:].strip()
+    if trailing:
+        print(f"\n{DIM}[warn] Ignored {len(trailing)} chars of trailing "
+              f"output after JSON object.{RESET}")
+    return obj
 
 
 # ── Logging ───────────────────────────────────────────────────────────────────
